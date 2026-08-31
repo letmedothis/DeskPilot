@@ -1,2 +1,9 @@
-// See the Electron documentation for details on how to use preload scripts:
-// https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
+import { contextBridge, ipcRenderer } from 'electron';
+
+contextBridge.exposeInMainWorld('deskPilot', {
+  notes: {
+    list: () => ipcRenderer.invoke('notes:list'),
+    create: (note) => ipcRenderer.invoke('notes:create', note),
+    update: (note) => ipcRenderer.invoke('notes:update', note),
+  },
+});
