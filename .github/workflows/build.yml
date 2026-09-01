@@ -19,11 +19,14 @@ jobs:
       matrix:
         include:
           - name: Windows
-            os: windows-latest
+            os: windows-2022
+            node: 22
           - name: macOS
             os: macos-latest
+            node: 22
           - name: Linux
             os: ubuntu-latest
+            node: 22
 
     steps:
       - name: Check out source
@@ -32,9 +35,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          # Electron Forge 7 + better-sqlite3 currently rebuilds reliably on Node 20.
-          # Node 22's node-gyp rejects the Visual Studio version on hosted Windows runners.
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: Install Linux packaging tools
