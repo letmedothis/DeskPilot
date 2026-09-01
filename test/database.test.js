@@ -10,6 +10,7 @@ function createDatabase() {
       title TEXT NOT NULL,
       category TEXT NOT NULL,
       content TEXT NOT NULL,
+      source_type TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       deleted_at TEXT
@@ -40,6 +41,16 @@ test('FTS5 searches title, category and content', () => {
   assert.equal(query('SQLite').length, 1);
   assert.equal(query('项目').length, 1);
   assert.equal(query('技术').length, 1);
+  database.close();
+});
+
+test('search results preserve the note source type', () => {
+  const database = createDatabase();
+  database.prepare('INSERT INTO notes (title, category, content, source_type) VALUES (?, ?, ?, ?)').run('导入笔记', '文件导入', '项目资料', 'file');
+  const result = database.prepare(`SELECT n.id, n.source_type
+    FROM notes_fts f JOIN notes n ON n.id = f.rowid
+    WHERE notes_fts MATCH ? AND n.deleted_at IS NULL`).get('"导入"*');
+  assert.equal(result.source_type, 'file');
   database.close();
 });
 

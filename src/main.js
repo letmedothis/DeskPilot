@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import started from 'electron-squirrel-startup';
@@ -10,6 +12,33 @@ if (started) {
 }
 
 let database;
+
+const isPrivateIp = (address) => {
+  if (isIP(address) === 4) {
+    const octets = address.split('.').map(Number);
+    return octets[0] === 0 || octets[0] === 10 || octets[0] === 127 ||
+      (octets[0] === 169 && octets[1] === 254) ||
+      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] === 192 && octets[1] === 168) ||
+      (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127);
+  }
+  if (isIP(address) === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === '::1' || normalized === '::' || normalized.startsWith('fc') ||
+      normalized.startsWith('fd') || normalized.startsWith('fe80:') ||
+      normalized.startsWith('::ffff:10.') || normalized.startsWith('::ffff:127.') ||
+      normalized.startsWith('::ffff:192.168.') || normalized.startsWith('::ffff:172.');
+  }
+  return false;
+};
+
+const assertPublicHost = async (hostname) => {
+  if (hostname === 'localhost' || isPrivateIp(hostname)) throw new Error('不允许导入本地或内网地址');
+  const addresses = await lookup(hostname, { all: true, verbatim: true });
+  if (addresses.length === 0 || addresses.some(({ address }) => isPrivateIp(address))) {
+    throw new Error('不允许导入解析到本地或内网地址的网页');
+  }
+};
 
 const initializeDatabase = () => {
   database = new Database(path.join(app.getPath('userData'), 'deskpilot.db'));
@@ -63,7 +92,7 @@ ipcMain.handle('notes:list-deleted', () => database.prepare('SELECT id, title, c
 ipcMain.handle('notes:search', (_, query) => {
   if (typeof query !== 'string' || !query.trim()) return database.prepare('SELECT id, title, category, content, source_type, updated_at AS updated FROM notes WHERE deleted_at IS NULL ORDER BY datetime(updated_at) DESC').all();
   const terms = query.trim().split(/\s+/).map((term) => `"${term.replaceAll('"', '""')}"*`).join(' ');
-  return database.prepare(`SELECT n.id, n.title, n.category, n.content, n.updated_at AS updated
+  return database.prepare(`SELECT n.id, n.title, n.category, n.content, n.source_type, n.updated_at AS updated
     FROM notes_fts f JOIN notes n ON n.id = f.rowid
     WHERE notes_fts MATCH ? AND n.deleted_at IS NULL
     ORDER BY rank, datetime(n.updated_at) DESC`).all(terms);
@@ -107,10 +136,9 @@ ipcMain.handle('notes:import-url', async (_, rawUrl) => {
   let target;
   try { target = new URL(rawUrl.trim()); } catch { throw new Error('网页地址格式无效'); }
   if (!['http:', 'https:'].includes(target.protocol)) throw new Error('只支持 HTTP 或 HTTPS 地址');
-  const hostname = target.hostname.toLowerCase();
-  const isPrivateHost = hostname === 'localhost' || hostname === '::1' || hostname === '0.0.0.0' || hostname === '127.0.0.1' || hostname.startsWith('10.') || hostname.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
-  if (isPrivateHost) throw new Error('不允许导入本地或内网地址');
-  const response = await fetch(target, { signal: AbortSignal.timeout(15000), headers: { Accept: 'text/html,text/plain' } });
+  const hostname = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  await assertPublicHost(hostname);
+  const response = await fetch(target, { redirect: 'error', signal: AbortSignal.timeout(15000), headers: { Accept: 'text/html,text/plain' } });
   if (!response.ok) throw new Error(`网页请求失败（${response.status}）`);
   const type = response.headers.get('content-type') || '';
   if (!type.includes('text/html') && !type.includes('text/plain')) throw new Error('该地址不是可导入的文本网页');
