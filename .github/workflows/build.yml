@@ -32,7 +32,9 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Electron Forge 7 + better-sqlite3 currently rebuilds reliably on Node 20.
+          # Node 22's node-gyp rejects the Visual Studio version on hosted Windows runners.
+          node-version: 20
           cache: npm
 
       - name: Install Linux packaging tools
