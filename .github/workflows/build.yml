@@ -3,6 +3,8 @@ name: Build desktop packages
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -30,7 +32,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install Linux packaging tools
@@ -40,11 +42,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Rebuild native modules for Electron
+        run: npx @electron/rebuild
+
       - name: Run tests
         run: npm test
 
       - name: Build packages
         run: npm run make
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
@@ -52,3 +59,4 @@ jobs:
           name: deskmanager-${{ runner.os }}
           path: out/make/**
           if-no-files-found: error
+          retention-days: 30
