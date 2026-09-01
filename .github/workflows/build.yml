@@ -1,0 +1,49 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules for Electron
+        run: npx @electron/rebuild
+
+      - name: Build EXE
+        run: npm run make
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+
+      - name: Generate timestamp
+        id: timestamp
+        run: echo "stamp=$(Get-Date -Format 'yyyyMMddHHmmss')" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Rename output
+        run: |
+          Rename-Item -Path "out\deskmanager-win32-x64" -NewName "deskmanager-win32-x64-${{ steps.timestamp.outputs.stamp }}"
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskmanager-${{ steps.timestamp.outputs.stamp }}
+          path: out/deskmanager-win32-x64-${{ steps.timestamp.outputs.stamp }}/
+          retention-days: 30
