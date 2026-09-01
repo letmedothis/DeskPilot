@@ -10,9 +10,15 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "echo \"No linting configured\""
+    "lint": "echo \"No linting configured\"",
+    "test": "node --test"
   },
-  "keywords": ["electron", "knowledge-base", "developer-tools", "ai"],
+  "keywords": [
+    "electron",
+    "knowledge-base",
+    "developer-tools",
+    "ai"
+  ],
   "author": {
     "name": "letmedothis",
     "email": "letmedothis@users.noreply.github.com"
@@ -20,5 +26,21 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-deb": "^7.11.2",
+    "@electron-forge/maker-rpm": "^7.11.2",
+    "@electron-forge/maker-squirrel": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron-forge/plugin-vite": "^7.11.2",
+    "@electron/fuses": "^1.8.0",
+    "electron": "^44.1.0",
+    "vite": "^8.2.2"
+  },
+  "overrides": {
+    "tar": "^7.5.22",
+    "tmp": "^0.2.7"
   }
 }

@@ -36,18 +36,17 @@ let notes = [
     updated: '刚刚',
     content: `# DeskPilot 项目规划
 
-DeskPilot 是一个面向开发者的本地优先 AI 工作台。
+DeskPilot 是一个面向开发者的本地优先知识管理工作台。
 
 ## 项目目标
 
-将笔记、代码片段、项目文档和 AI 助手放在一个安静、专注的桌面空间里。
+将笔记、代码片段和项目文档放在一个安静、专注的桌面空间里。
 
 ## 下一步
 
 - 完成 SQLite 数据层
 - 增加 Markdown 编辑器
-- 接入文档全文检索
-- 添加基于文档的 AI 问答`,
+- 接入文档全文检索` ,
   },
   {
     id: 2,
@@ -67,38 +66,86 @@ DeskPilot 是一个面向开发者的本地优先 AI 工作台。
 
 let activeNoteId = 1;
 let searchTerm = '';
+let editorMode = 'edit';
+let saveTimer;
+let currentView = 'notes';
+let deletedNotes = [];
+let searchTimer;
 const storage = window.deskPilot?.notes;
 
 const app = document.querySelector('#app');
 
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]);
+}
+
+function markdownToHtml(markdown) {
+  const codeMarker = String.fromCharCode(96);
+  return escapeHtml(markdown)
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>').replace(/^## (.+)$/gm, '<h2>$1</h2>').replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/^[-*] (.+)$/gm, '<li>$1</li>').replace(new RegExp(codeMarker + '([^' + codeMarker + ']*)' + codeMarker, 'g'), '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .split(/\n{2,}/).map((block) => block.startsWith('<h') || block.startsWith('<li>') ? block : `<p>${block.replace(/\n/g, '<br>')}</p>`).join('')
+    .replace(/(<li>.*<\/li>)+/g, '<ul>$&</ul>');
+}
+
+function setSaveStatus(text, state = '') {
+  const status = document.querySelector('.status');
+  if (status) status.innerHTML = `<span class="saved-dot ${state}"></span> ${text}`;
+}
+
+function selectNextNote() {
+  const currentIndex = notes.findIndex((note) => note.id === activeNoteId);
+  activeNoteId = notes[currentIndex >= 0 && currentIndex < notes.length - 1 ? currentIndex + 1 : 0]?.id;
+}
+
 function render() {
   const activeNote = notes.find((note) => note.id === activeNoteId) ?? notes[0];
-  const visibleNotes = notes.filter((note) =>
-    `${note.title} ${note.category}`.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
+  const sourceNotes = currentView === 'trash' ? deletedNotes : notes;
+  const visibleNotes = currentView === 'trash' ? sourceNotes.filter((note) =>
+    `${note.title} ${note.category} ${note.content}`.toLowerCase().includes(searchTerm.toLowerCase()),
+  ) : sourceNotes;
 
   app.innerHTML = `
     <div class="shell">
       <aside class="sidebar">
         <div class="brand"><div class="brand-mark">D</div><div><strong>DeskPilot</strong><span>Developer workspace</span></div></div>
-        <button class="new-note" id="new-note"><span>＋</span> 新建笔记 <kbd>⌘ N</kbd></button>
-        <nav class="nav"><a class="nav-item active"><span>▤</span> 我的笔记 <em>${notes.length}</em></a><a class="nav-item"><span>◈</span> 收藏夹</a><a class="nav-item"><span>⌘</span> 代码片段</a><a class="nav-item"><span>◌</span> AI 助手<span class="soon">Soon</span></a></nav>
+        <button class="new-note" id="new-note"><span>＋</span> 新建笔记 <kbd>⌘ N</kbd></button><button class="import-note" id="import-note"><span>↥</span> 导入文件</button><button class="import-note" id="import-url"><span>↗</span> 导入网页</button>
+        <nav class="nav"><a class="nav-item ${currentView === 'notes' ? 'active' : ''}" id="notes-view"><span>▤</span> 我的笔记 <em>${notes.length}</em></a><a class="nav-item"><span>◈</span> 收藏夹</a><a class="nav-item"><span>⌘</span> 代码片段</a><a class="nav-item ${currentView === 'trash' ? 'active' : ''}" id="trash-view"><span>⌫</span> 回收站 <em>${deletedNotes.length}</em></a></nav>
         <div class="section-label">工作区</div><div class="workspace-item"><span class="dot purple"></span> 项目规划 <span class="count">12</span></div><div class="workspace-item"><span class="dot blue"></span> 技术学习 <span class="count">8</span></div><div class="workspace-item"><span class="dot orange"></span> 日常记录 <span class="count">5</span></div>
-        <div class="sidebar-bottom"><div class="storage"><div><span>本地存储</span><span>24%</span></div><div class="progress"><i></i></div><small>1.2 GB / 5 GB</small></div><div class="profile"><div class="avatar">L</div><div><strong>LetMeDoThis</strong><span>离线模式</span></div><span class="more">•••</span></div></div>
+        <div class="sidebar-bottom"><div class="storage"><div><span>本地存储</span><span>24%</span></div><div class="progress"><i></i></div><small>1.2 GB / 5 GB</small></div><div class="backup-actions"><button id="export-backup">导出备份</button><button id="restore-backup">恢复备份</button></div><div class="profile"><div class="avatar">L</div><div><strong>LetMeDoThis</strong><span>离线模式</span></div><span class="more">•••</span></div></div>
       </aside>
-      <main class="main"><header class="topbar"><div class="breadcrumb">我的笔记 <span>/</span> ${activeNote.category}</div><div class="top-actions"><label class="search"><span>⌕</span><input id="search" placeholder="搜索笔记..." value="${searchTerm}"/><kbd>⌘ K</kbd></label><button class="icon-button">☼</button><button class="icon-button">⚙</button></div></header>
-        <section class="content"><div class="list-panel"><div class="list-heading"><div><h1>我的笔记</h1><p>捕捉想法，整理知识</p></div><button class="filter">最近更新⌄</button></div><div class="note-list">${visibleNotes.map((note) => `<button class="note-card ${note.id === activeNoteId ? 'selected' : ''}" data-note-id="${note.id}"><div class="note-card-top"><span class="note-icon">✦</span><time>${note.updated}</time></div><strong>${note.title}</strong><span>${note.category}</span><div class="preview">${note.content.split('\n').filter(Boolean)[1] ?? ''}</div></button>`).join('')}</div></div>
-        <article class="editor"><div class="editor-toolbar"><div class="status"><span class="saved-dot"></span> 已保存</div><div><button class="tool">⌁</button><button class="tool">⋮</button></div></div><div class="editor-body"><div class="editor-meta"><span class="tag">${activeNote.category}</span><time>最后编辑于 ${activeNote.updated}</time></div><textarea id="editor" spellcheck="false">${activeNote.content}</textarea></div></article></section>
+      <main class="main"><header class="topbar"><div class="breadcrumb">${currentView === 'trash' ? '回收站' : '我的笔记'} ${activeNote && currentView === 'notes' ? `<span>/</span> ${escapeHtml(activeNote.category)}` : ''}</div><div class="top-actions"><label class="search"><span>⌕</span><input id="search" placeholder="搜索笔记..." value="${escapeHtml(searchTerm)}"/><kbd>⌘ K</kbd></label><button class="icon-button">☼</button><button class="icon-button">⚙</button></div></header>
+        <section class="content"><div class="list-panel"><div class="list-heading"><div><h1>${currentView === 'trash' ? '回收站' : '我的笔记'}</h1><p>${currentView === 'trash' ? '已删除的笔记可以恢复或彻底清除' : '捕捉想法，整理知识'}</p></div><button class="filter">最近更新⌄</button></div><div class="note-list">${visibleNotes.length ? visibleNotes.map((note) => `<div class="note-card ${note.id === activeNoteId && currentView === 'notes' ? 'selected' : ''}"><div class="note-card-top"><span class="note-icon">✦</span><time>${escapeHtml(note.updated ?? note.deleted)}</time></div><strong>${escapeHtml(note.title)}</strong><span>${escapeHtml(note.category)}</span><div class="preview">${escapeHtml(note.content.split('\n').filter(Boolean)[1] ?? '')}</div>${currentView === 'trash' ? `<div class="trash-actions"><button class="restore-note" data-restore-id="${note.id}">恢复笔记</button><button class="purge-note" data-purge-id="${note.id}">彻底删除</button></div>` : `<button class="note-select" data-note-id="${note.id}" aria-label="打开笔记"></button>`}</div>`).join('') : `<div class="empty-state">${currentView === 'trash' ? '回收站为空' : '没有找到匹配的笔记'}</div>`}</div></div>
+        <article class="editor">${currentView === 'notes' && activeNote ? `<div class="editor-toolbar"><div class="status"><span class="saved-dot"></span> 已保存</div><div class="editor-actions"><button class="delete-note" id="delete-note">删除</button><div class="mode-switch"><button class="mode ${editorMode === 'edit' ? 'active' : ''}" data-mode="edit">编辑</button><button class="mode ${editorMode === 'preview' ? 'active' : ''}" data-mode="preview">预览</button></div></div></div><div class="editor-body"><div class="editor-meta"><input class="title-input" id="title" value="${escapeHtml(activeNote.title)}" aria-label="笔记标题"/><input class="category-input" id="category" value="${escapeHtml(activeNote.category)}" aria-label="笔记分类"/><time>最后编辑于 ${escapeHtml(activeNote.updated)}</time>${activeNote.source_type ? `<small class="source-label">来源：${escapeHtml(activeNote.source_type === 'url' ? '网页' : '文件')}</small>` : ''}</div>${editorMode === 'edit' ? `<textarea id="editor" spellcheck="false">${escapeHtml(activeNote.content)}</textarea>` : `<div class="markdown-preview">${markdownToHtml(activeNote.content)}</div>`}</div>` : '<div class="empty-editor">暂无可编辑笔记<br><small>从左侧选择一条笔记</small></div>'}</article></section>
       </main>
     </div>`;
 
   document.querySelectorAll('[data-note-id]').forEach((button) => button.addEventListener('click', () => { activeNoteId = Number(button.dataset.noteId); render(); }));
-  document.querySelector('#search').addEventListener('input', (event) => { searchTerm = event.target.value; render(); const input = document.querySelector('#search'); input.focus(); input.setSelectionRange(searchTerm.length, searchTerm.length); });
-  document.querySelector('#new-note').addEventListener('click', async () => { const note = { title: '未命名笔记', category: '项目规划', content: '# 未命名笔记\n\n开始记录你的想法...' }; const created = storage ? await storage.create(note) : { ...note, id: Date.now(), updated: '刚刚' }; notes.unshift(created); activeNoteId = created.id; searchTerm = ''; render(); });
-  document.querySelector('#editor').addEventListener('input', (event) => { activeNote.content = event.target.value; document.querySelector('.status').innerHTML = '<span class="saved-dot saving"></span> 保存中...'; window.clearTimeout(activeNote.saveTimer); activeNote.saveTimer = window.setTimeout(async () => { if (storage) await storage.update(activeNote); document.querySelector('.status').innerHTML = '<span class="saved-dot"></span> 已保存'; }, 500); });
+  document.querySelectorAll('[data-restore-id]').forEach((button) => button.addEventListener('click', async () => { try { const id = Number(button.dataset.restoreId); const restored = storage ? await storage.restore(id) : deletedNotes.find((note) => note.id === id); deletedNotes = deletedNotes.filter((note) => note.id !== id); if (restored) notes.unshift(restored); render(); } catch (error) { console.error(error); } }));
+  document.querySelectorAll('[data-purge-id]').forEach((button) => button.addEventListener('click', async () => { const id = Number(button.dataset.purgeId); if (!window.confirm('彻底删除后将无法恢复，确定继续吗？')) return; try { if (storage) await storage.purge(id); deletedNotes = deletedNotes.filter((note) => note.id !== id); render(); } catch (error) { console.error(error); } }));
+  document.querySelector('#search').addEventListener('input', (event) => { searchTerm = event.target.value; render(); const input = document.querySelector('#search'); input.focus(); input.setSelectionRange(searchTerm.length, searchTerm.length); if (storage && currentView === 'notes') { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(async () => { notes = await storage.search(searchTerm); activeNoteId = notes.find((note) => note.id === activeNoteId)?.id ?? notes[0]?.id; render(); }, 250); } });
+  document.querySelector('#new-note').addEventListener('click', async () => { const note = { title: '未命名笔记', category: '项目规划', content: '# 未命名笔记\n\n开始记录你的想法...' }; const created = storage ? await storage.create(note) : { ...note, id: Date.now(), updated: '刚刚' }; notes.unshift(created); activeNoteId = created.id; currentView = 'notes'; searchTerm = ''; render(); });
+  document.querySelector('#import-note').addEventListener('click', async () => { try { const imported = storage ? await storage.importFile() : null; if (imported) { notes.unshift(imported); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '导入失败，请重试'); } });
+  document.querySelector('.editor')?.addEventListener('dragover', (event) => { event.preventDefault(); event.currentTarget.classList.add('drop-target'); });
+  document.querySelector('.editor')?.addEventListener('dragleave', (event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.classList.remove('drop-target'); });
+  document.querySelector('.editor')?.addEventListener('drop', async (event) => { event.preventDefault(); event.currentTarget.classList.remove('drop-target'); const file = event.dataTransfer.files[0]; if (!file || !storage) return; try { const imported = await storage.importDroppedFile(file); if (imported) { notes.unshift(imported); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '拖拽导入失败，请重试'); } });
+  document.querySelector('#import-url').addEventListener('click', async () => { const url = window.prompt('输入网页地址（HTTP/HTTPS）'); if (!url) return; try { const imported = storage ? await storage.importUrl(url) : null; if (imported) { notes.unshift(imported); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '网页导入失败，请重试'); } });
+  document.querySelector('#export-backup').addEventListener('click', async () => { try { if (storage && await storage.exportBackup()) window.alert('备份导出成功'); } catch (error) { console.error(error); window.alert(error.message || '导出失败，请重试'); } });
+  document.querySelector('#restore-backup').addEventListener('click', async () => { try { if (!storage) return; const count = await storage.restoreBackup(); if (count > 0) { notes = await storage.list(); deletedNotes = await storage.listDeleted(); activeNoteId = notes[0]?.id; currentView = 'notes'; render(); window.alert(`已恢复 ${count} 条笔记`); } } catch (error) { console.error(error); window.alert(error.message || '恢复失败，请重试'); } });
+  document.querySelector('#trash-view').addEventListener('click', async () => { currentView = 'trash'; searchTerm = ''; if (storage) deletedNotes = await storage.listDeleted(); render(); });
+  document.querySelector('#notes-view').addEventListener('click', async () => { currentView = 'notes'; searchTerm = ''; if (storage) notes = await storage.list(); activeNoteId = notes[0]?.id; render(); });
+  document.querySelector('#delete-note')?.addEventListener('click', async () => { if (!activeNote || !window.confirm('确定删除这条笔记吗？')) return; try { if (storage) await storage.delete(activeNote.id); notes = notes.filter((note) => note.id !== activeNote.id); selectNextNote(); render(); } catch (error) { console.error(error); setSaveStatus('删除失败，请重试', 'error'); } });
+  document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => { editorMode = button.dataset.mode; render(); }));
+  const save = () => { setSaveStatus('保存中...', 'saving'); window.clearTimeout(saveTimer); saveTimer = window.setTimeout(async () => { try { const saved = storage ? await storage.update(activeNote) : { ...activeNote, updated: '刚刚' }; const index = notes.findIndex((note) => note.id === saved.id); if (index >= 0) notes[index] = saved; setSaveStatus('已保存'); } catch (error) { console.error(error); setSaveStatus('保存失败，请重试', 'error'); } }, 500); };
+  ['title', 'category', 'editor'].forEach((field) => document.querySelector(`#${field}`)?.addEventListener('input', (event) => { activeNote[field === 'editor' ? 'content' : field] = event.target.value; save(); }));
 }
 
 render();
+
+window.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); document.querySelector('#search')?.focus(); }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); document.querySelector('#new-note')?.click(); }
+});
 
 if (storage) {
   storage.list().then((savedNotes) => {
