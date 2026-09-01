@@ -73,6 +73,11 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out source history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download packages from all platforms
         uses: actions/download-artifact@v4
         with:
@@ -84,11 +89,29 @@ jobs:
         shell: bash
         run: echo "value=$(TZ=Asia/Shanghai date +'%Y%m%d-%H%M')-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
+      - name: Summarize changes in this push
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          {
+            echo '## 本次变更'
+            git log --pretty=format:'- %s (%h)' "${BEFORE_SHA}..${AFTER_SHA}"
+            echo
+            echo
+            echo '## 文件变更统计'
+            echo '```text'
+            git diff --stat "${BEFORE_SHA}" "${AFTER_SHA}"
+            echo '```'
+          } > release-notes.md
+
       - name: Create GitHub Release and upload packages
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.timestamp.outputs.value }}
           name: DeskManager ${{ steps.timestamp.outputs.value }}
+          body_path: release-notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release-assets/**/*
