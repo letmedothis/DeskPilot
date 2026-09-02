@@ -98,7 +98,7 @@ DeskPilot 是一个本地优先的开发者知识管理工作台，用于保存�
 | --- | --- | --- |
 | `notes.list()` | 获取按更新时间排序的笔记 | 笔记数组 |
 | `notes.create(note)` | 创建一条笔记 | 新建笔记 |
-| `notes.update(note)` | 更新标题、分类和内容 | `true` |
+| `notes.update(note)` | 更新标题、分类和内容 | 更新后的笔记 |
 
 当前已实现的扩展 API：
 

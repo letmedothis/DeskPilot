@@ -10,7 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "echo \"No linting configured\"",
+    "lint": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check test/database.test.js",
     "test": "node --test"
   },
   "keywords": [

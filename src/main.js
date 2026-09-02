@@ -113,7 +113,7 @@ const importFilePath = async (filePath) => {
   const content = file.toString('utf8');
   const existing = database.prepare('SELECT id, deleted_at FROM notes WHERE source_type = ? AND source_ref = ? ORDER BY id DESC LIMIT 1').get('file', filePath);
   if (existing) {
-    if (existing.deleted_at) database.prepare('UPDATE notes SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existing.id);
+    database.prepare('UPDATE notes SET title = ?, content = ?, category = ?, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(title, content, '文件导入', existing.id);
     return database.prepare('SELECT id, title, category, content, source_type, updated_at AS updated FROM notes WHERE id = ?').get(existing.id);
   }
   const insert = database.prepare('INSERT INTO notes (title, category, content, updated_at, source_type, source_ref) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)').run(title, '文件导入', content, 'file', filePath);
@@ -153,7 +153,7 @@ ipcMain.handle('notes:import-url', async (_, rawUrl) => {
   const title = target.hostname || '网页笔记';
   const existing = database.prepare('SELECT id, deleted_at FROM notes WHERE source_type = ? AND source_ref = ? ORDER BY id DESC LIMIT 1').get('url', target.href);
   if (existing) {
-    if (existing.deleted_at) database.prepare('UPDATE notes SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existing.id);
+    database.prepare('UPDATE notes SET title = ?, content = ?, category = ?, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(title, content, '网页导入', existing.id);
     return database.prepare('SELECT id, title, category, content, source_type, updated_at AS updated FROM notes WHERE id = ?').get(existing.id);
   }
   const insert = database.prepare('INSERT INTO notes (title, category, content, updated_at, source_type, source_ref) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)').run(title, '网页导入', content, 'url', target.href);
@@ -212,7 +212,13 @@ ipcMain.handle('notes:restore-backup', async () => {
   let backup;
   try { backup = JSON.parse(file.toString('utf8')); } catch { throw new Error('备份文件格式无效'); }
   if (backup?.format !== 'deskpilot-backup' || backup.version !== 1 || !Array.isArray(backup.notes)) throw new Error('不支持的备份文件');
-  const validNotes = backup.notes.filter((note) => typeof note?.title === 'string' && typeof note?.category === 'string' && typeof note?.content === 'string');
+  const isOptionalText = (value) => value === null || typeof value === 'string';
+  const validNotes = backup.notes.filter((note) =>
+    typeof note?.title === 'string' && typeof note?.category === 'string' && typeof note?.content === 'string' &&
+    (note.created_at === undefined || typeof note.created_at === 'string') &&
+    (note.updated_at === undefined || typeof note.updated_at === 'string') &&
+    isOptionalText(note.deleted_at) && isOptionalText(note.source_type) && isOptionalText(note.source_ref),
+  );
   const insert = database.prepare('INSERT INTO notes (title, category, content, created_at, updated_at, deleted_at, source_type, source_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   const restore = database.transaction((items) => { for (const note of items) insert.run(note.title.slice(0, 500), note.category.slice(0, 100), note.content, note.created_at || new Date().toISOString(), note.updated_at || new Date().toISOString(), typeof note.deleted_at === 'string' ? note.deleted_at : null, typeof note.source_type === 'string' ? note.source_type.slice(0, 20) : null, typeof note.source_ref === 'string' ? note.source_ref.slice(0, 2000) : null); });
   restore(validNotes);

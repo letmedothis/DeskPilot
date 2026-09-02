@@ -71,9 +71,11 @@ let saveTimer;
 let currentView = 'notes';
 let deletedNotes = [];
 let searchTimer;
+let searchRequestId = 0;
 let theme = localStorage.getItem('deskpilot-theme') || 'dark';
 let selectedCategory = '';
 let settingsOpen = false;
+let sortByTitle = false;
 const storage = window.deskPilot?.notes;
 
 const app = document.querySelector('#app');
@@ -148,16 +150,22 @@ function render() {
   const activeNote = notes.find((note) => note.id === activeNoteId && (!selectedCategory || note.category === selectedCategory))
     ?? notes.find((note) => !selectedCategory || note.category === selectedCategory);
   const sourceNotes = currentView === 'trash' ? deletedNotes : notes;
-  const visibleNotes = currentView === 'trash' ? sourceNotes.filter((note) =>
+  const filteredNotes = currentView === 'trash' ? sourceNotes.filter((note) =>
     `${note.title} ${note.category} ${note.content}`.toLowerCase().includes(searchTerm.toLowerCase()),
-  ) : sourceNotes.filter((note) => !selectedCategory || note.category === selectedCategory);
+  ) : sourceNotes.filter((note) =>
+    (!selectedCategory || note.category === selectedCategory) &&
+    (!searchTerm || `${note.title} ${note.category} ${note.content}`.toLowerCase().includes(searchTerm.toLowerCase())),
+  );
+  const visibleNotes = [...filteredNotes].sort((left, right) => sortByTitle
+    ? left.title.localeCompare(right.title, 'zh-Hans')
+    : String(right.updated ?? right.deleted).localeCompare(String(left.updated ?? left.deleted)));
 
   app.innerHTML = `
     <div class="shell">
       <aside class="sidebar">
         <div class="brand"><div class="brand-mark">D</div><div><strong>DeskPilot</strong><span>Developer workspace</span></div></div>
         <button class="new-note" id="new-note"><span>＋</span> 新建笔记 <kbd>⌘ N</kbd></button><button class="import-note" id="import-note"><span>↥</span> 导入文件</button><button class="import-note" id="import-url"><span>↗</span> 导入网页</button>
-        <nav class="nav"><a class="nav-item ${currentView === 'notes' ? 'active' : ''}" id="notes-view"><span>▤</span> 我的笔记 <em>${notes.length}</em></a><a class="nav-item"><span>◈</span> 收藏夹</a><a class="nav-item"><span>⌘</span> 代码片段</a><a class="nav-item ${currentView === 'trash' ? 'active' : ''}" id="trash-view"><span>⌫</span> 回收站 <em>${deletedNotes.length}</em></a></nav>
+        <nav class="nav"><a class="nav-item ${currentView === 'notes' ? 'active' : ''}" id="notes-view"><span>▤</span> 我的笔记 <em>${notes.length}</em></a><a class="nav-item ${currentView === 'trash' ? 'active' : ''}" id="trash-view"><span>⌫</span> 回收站 <em>${deletedNotes.length}</em></a></nav>
         <div class="section-label">工作区</div><button class="workspace-item ${selectedCategory === '项目规划' ? 'active' : ''}" data-category="项目规划"><span class="dot purple"></span> 项目规划 <span class="count">${categoryCount('项目规划')}</span></button><button class="workspace-item ${selectedCategory === '技术学习' ? 'active' : ''}" data-category="技术学习"><span class="dot blue"></span> 技术学习 <span class="count">${categoryCount('技术学习')}</span></button><button class="workspace-item ${selectedCategory === '日常记录' ? 'active' : ''}" data-category="日常记录"><span class="dot orange"></span> 日常记录 <span class="count">${categoryCount('日常记录')}</span></button>
         <div class="sidebar-bottom"><div class="storage"><div><span>本地存储</span><span>24%</span></div><div class="progress"><i></i></div><small>1.2 GB / 5 GB</small></div><div class="backup-actions"><button id="export-backup">导出备份</button><button id="restore-backup">恢复备份</button></div><div class="profile"><div class="avatar">L</div><div><strong>LetMeDoThis</strong><span>离线模式</span></div><span class="more">•••</span></div></div>
       </aside>
@@ -169,26 +177,27 @@ function render() {
     </div>`;
 
   document.querySelectorAll('[data-note-id]').forEach((button) => button.addEventListener('click', () => { activeNoteId = Number(button.dataset.noteId); render(); }));
+  document.querySelector('.filter')?.addEventListener('click', () => { sortByTitle = !sortByTitle; render(); });
   document.querySelectorAll('[data-restore-id]').forEach((button) => button.addEventListener('click', async () => { try { const id = Number(button.dataset.restoreId); const restored = storage ? await storage.restore(id) : deletedNotes.find((note) => note.id === id); deletedNotes = deletedNotes.filter((note) => note.id !== id); if (restored) notes.unshift(restored); render(); } catch (error) { console.error(error); } }));
   document.querySelectorAll('[data-purge-id]').forEach((button) => button.addEventListener('click', async () => { const id = Number(button.dataset.purgeId); if (!window.confirm('彻底删除后将无法恢复，确定继续吗？')) return; try { if (storage) await storage.purge(id); deletedNotes = deletedNotes.filter((note) => note.id !== id); render(); } catch (error) { console.error(error); } }));
-  document.querySelector('#search').addEventListener('input', (event) => { searchTerm = event.target.value; render(); const input = document.querySelector('#search'); input.focus(); input.setSelectionRange(searchTerm.length, searchTerm.length); if (storage && currentView === 'notes') { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(async () => { notes = await storage.search(searchTerm); activeNoteId = notes.find((note) => note.id === activeNoteId)?.id ?? notes[0]?.id; render(); }, 250); } });
+  document.querySelector('#search').addEventListener('input', (event) => { searchTerm = event.target.value; render(); const input = document.querySelector('#search'); input.focus(); input.setSelectionRange(searchTerm.length, searchTerm.length); if (storage && currentView === 'notes') { window.clearTimeout(searchTimer); const requestId = ++searchRequestId; const query = searchTerm; searchTimer = window.setTimeout(async () => { const result = await storage.search(query); if (requestId !== searchRequestId || query !== searchTerm || currentView !== 'notes') return; notes = result; activeNoteId = notes.find((note) => note.id === activeNoteId)?.id ?? notes[0]?.id; render(); }, 250); } });
   document.querySelector('#theme-toggle').addEventListener('click', () => { setTheme(theme === 'dark' ? 'light' : 'dark'); render(); });
   document.querySelector('#settings-toggle').addEventListener('click', () => { settingsOpen = true; render(); });
   document.querySelector('#settings-close')?.addEventListener('click', () => { settingsOpen = false; render(); });
   document.querySelector('#settings-backdrop')?.addEventListener('click', (event) => { if (event.target.id === 'settings-backdrop') { settingsOpen = false; render(); } });
   document.querySelector('#settings-theme')?.addEventListener('click', () => { setTheme(theme === 'dark' ? 'light' : 'dark'); render(); });
-  document.querySelectorAll('[data-category]').forEach((button) => button.addEventListener('click', async () => { selectedCategory = selectedCategory === button.dataset.category ? '' : button.dataset.category; currentView = 'notes'; searchTerm = ''; if (storage) notes = await storage.list(); activeNoteId = notes.find((note) => !selectedCategory || note.category === selectedCategory)?.id; render(); }));
+  document.querySelectorAll('[data-category]').forEach((button) => button.addEventListener('click', async () => { window.clearTimeout(searchTimer); ++searchRequestId; selectedCategory = selectedCategory === button.dataset.category ? '' : button.dataset.category; currentView = 'notes'; searchTerm = ''; if (storage) notes = await storage.list(); activeNoteId = notes.find((note) => !selectedCategory || note.category === selectedCategory)?.id; render(); }));
   document.querySelector('#new-note').addEventListener('click', async () => { const note = { title: '未命名笔记', category: '项目规划', content: '# 未命名笔记\n\n开始记录你的想法...' }; const created = storage ? await storage.create(note) : { ...note, id: Date.now(), updated: '刚刚' }; notes.unshift(created); activeNoteId = created.id; currentView = 'notes'; searchTerm = ''; render(); });
-  document.querySelector('#import-note').addEventListener('click', async () => { try { const imported = storage ? await storage.importFile() : null; if (imported) { notes.unshift(imported); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '导入失败，请重试'); } });
+  document.querySelector('#import-note').addEventListener('click', async () => { try { const imported = storage ? await storage.importFile() : null; if (imported) { notes = await storage.list(); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '导入失败，请重试'); } });
   document.querySelector('.editor')?.addEventListener('dragover', (event) => { event.preventDefault(); event.currentTarget.classList.add('drop-target'); });
   document.querySelector('.editor')?.addEventListener('dragleave', (event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.classList.remove('drop-target'); });
-  document.querySelector('.editor')?.addEventListener('drop', async (event) => { event.preventDefault(); event.currentTarget.classList.remove('drop-target'); const file = event.dataTransfer.files[0]; if (!file || !storage) return; try { const imported = await storage.importDroppedFile(file); if (imported) { notes.unshift(imported); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '拖拽导入失败，请重试'); } });
-  document.querySelector('#import-url').addEventListener('click', async () => { const url = window.prompt('输入网页地址（HTTP/HTTPS）'); if (!url) return; try { const imported = storage ? await storage.importUrl(url) : null; if (imported) { notes.unshift(imported); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '网页导入失败，请重试'); } });
+  document.querySelector('.editor')?.addEventListener('drop', async (event) => { event.preventDefault(); event.currentTarget.classList.remove('drop-target'); const file = event.dataTransfer.files[0]; if (!file || !storage) return; try { const imported = await storage.importDroppedFile(file); if (imported) { notes = await storage.list(); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '拖拽导入失败，请重试'); } });
+  document.querySelector('#import-url').addEventListener('click', async () => { const url = window.prompt('输入网页地址（HTTP/HTTPS）'); if (!url) return; try { const imported = storage ? await storage.importUrl(url) : null; if (imported) { notes = await storage.list(); activeNoteId = imported.id; currentView = 'notes'; searchTerm = ''; render(); } } catch (error) { console.error(error); window.alert(error.message || '网页导入失败，请重试'); } });
   document.querySelector('#export-backup').addEventListener('click', async () => { try { if (storage && await storage.exportBackup()) window.alert('备份导出成功'); } catch (error) { console.error(error); window.alert(error.message || '导出失败，请重试'); } });
   document.querySelector('#restore-backup').addEventListener('click', async () => { try { if (!storage) return; const count = await storage.restoreBackup(); if (count > 0) { notes = await storage.list(); deletedNotes = await storage.listDeleted(); activeNoteId = notes[0]?.id; currentView = 'notes'; render(); window.alert(`已恢复 ${count} 条笔记`); } } catch (error) { console.error(error); window.alert(error.message || '恢复失败，请重试'); } });
-  document.querySelector('#trash-view').addEventListener('click', async () => { currentView = 'trash'; searchTerm = ''; if (storage) deletedNotes = await storage.listDeleted(); render(); });
-  document.querySelector('#notes-view').addEventListener('click', async () => { currentView = 'notes'; searchTerm = ''; selectedCategory = ''; if (storage) notes = await storage.list(); activeNoteId = notes[0]?.id; render(); });
-  document.querySelector('#delete-note')?.addEventListener('click', async () => { if (!activeNote || !window.confirm('确定删除这条笔记吗？')) return; try { if (storage) await storage.delete(activeNote.id); notes = notes.filter((note) => note.id !== activeNote.id); selectNextNote(); render(); } catch (error) { console.error(error); setSaveStatus('删除失败，请重试', 'error'); } });
+  document.querySelector('#trash-view').addEventListener('click', async () => { window.clearTimeout(searchTimer); ++searchRequestId; currentView = 'trash'; searchTerm = ''; if (storage) deletedNotes = await storage.listDeleted(); render(); });
+  document.querySelector('#notes-view').addEventListener('click', async () => { window.clearTimeout(searchTimer); ++searchRequestId; currentView = 'notes'; searchTerm = ''; selectedCategory = ''; if (storage) notes = await storage.list(); activeNoteId = notes[0]?.id; render(); });
+  document.querySelector('#delete-note')?.addEventListener('click', async () => { if (!activeNote || !window.confirm('确定删除这条笔记吗？')) return; try { if (storage) await storage.delete(activeNote.id); notes = notes.filter((note) => note.id !== activeNote.id); if (storage) deletedNotes = await storage.listDeleted(); selectNextNote(); render(); } catch (error) { console.error(error); setSaveStatus('删除失败，请重试', 'error'); } });
   document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => { editorMode = button.dataset.mode; render(); }));
   const save = () => { setSaveStatus('保存中...', 'saving'); window.clearTimeout(saveTimer); saveTimer = window.setTimeout(async () => { try { const saved = storage ? await storage.update(activeNote) : { ...activeNote, updated: '刚刚' }; const index = notes.findIndex((note) => note.id === saved.id); if (index >= 0) notes[index] = saved; setSaveStatus('已保存'); } catch (error) { console.error(error); setSaveStatus('保存失败，请重试', 'error'); } }, 500); };
   ['title', 'category', 'editor'].forEach((field) => document.querySelector(`#${field}`)?.addEventListener('input', (event) => { activeNote[field === 'editor' ? 'content' : field] = event.target.value; save(); }));
